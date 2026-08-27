@@ -16,6 +16,7 @@ from plugins.functions.display_progress import progress_for_pyrogram, humanbytes
 from plugins.database.database import db
 from PIL import Image
 from plugins.functions.ran_text import random_char
+import mimetypes  # MIME টাইপ চেকের জন্য
 
 cookies_file = 'cookies.txt'
 
@@ -174,18 +175,35 @@ async def youtube_dl_call_back(bot, update):
         end_one = datetime.now()
         time_taken_for_download = (end_one - start).seconds
         
+        # আসল ফাইল খুঁজে বের করা (কারণ yt-dlp মাঝে মাঝে নাম বদলায়)
+        actual_file_path = None
         if os.path.isfile(download_directory):
-            file_size = os.stat(download_directory).st_size
+            actual_file_path = download_directory
         else:
-            download_directory = os.path.splitext(download_directory)[0] + "." + ".mkv"
-            if os.path.isfile(download_directory):
-                file_size = os.stat(download_directory).st_size
-            else:
-                logger.error(f"Downloaded file not found: {download_directory}")
-                await update.message.edit_caption(
-                    caption=Translation.DOWNLOAD_FAILED
-                )
-                return False
+            # চেষ্টা করি অন্য কোনো এক্সটেনশনে সেভ করেছে কিনা
+            base_name = os.path.splitext(download_directory)[0]
+            for ext in ['.mp4', '.mkv', '.webm', '.pdf', '.mp3', '.m4a']:
+                test_path = base_name + ext
+                if os.path.isfile(test_path):
+                    actual_file_path = test_path
+                    break
+            # যদি না পাই, তাহলে ডিরেক্টরি স্ক্যান করি
+            if actual_file_path is None:
+                dir_path = os.path.dirname(download_directory)
+                for f in os.listdir(dir_path):
+                    if f.startswith(os.path.basename(base_name)):
+                        actual_file_path = os.path.join(dir_path, f)
+                        break
+        
+        if actual_file_path is None:
+            logger.error(f"Downloaded file not found: {download_directory}")
+            await update.message.edit_caption(
+                caption=Translation.DOWNLOAD_FAILED
+            )
+            return False
+        
+        # ফাইল সাইজ চেক
+        file_size = os.stat(actual_file_path).st_size
         
         if file_size > Config.TG_MAX_FILE_SIZE:
             await update.message.edit_caption(
@@ -193,16 +211,24 @@ async def youtube_dl_call_back(bot, update):
             )
         else:
             await update.message.edit_caption(
-                caption=Translation.UPLOAD_START.format(custom_file_name)
+                caption=Translation.UPLOAD_START.format(os.path.basename(actual_file_path))
             )
             start_time = time.time()
             
-            # ========== NEW PDF CHECK ==========
-            # যদি ফাইলের নাম .pdf দিয়ে শেষ হয়, তাহলে ডকুমেন্ট হিসেবেই আপলোড করবে
-            if download_directory.lower().endswith('.pdf'):
+            # ========== PDF DETECTION ==========
+            # ১. এক্সটেনশন চেক
+            is_pdf = actual_file_path.lower().endswith('.pdf')
+            # ২. MIME টাইপ চেক
+            if not is_pdf:
+                mime_type, _ = mimetypes.guess_type(actual_file_path)
+                if mime_type and mime_type == 'application/pdf':
+                    is_pdf = True
+            
+            if is_pdf:
+                # PDF হলে সরাসরি ডকুমেন্ট হিসেবে আপলোড
                 thumbnail = await Gthumb01(bot, update)
                 await update.message.reply_document(
-                    document=download_directory,
+                    document=actual_file_path,
                     thumb=thumbnail,
                     caption=description,
                     progress=progress_for_pyrogram,
@@ -213,11 +239,11 @@ async def youtube_dl_call_back(bot, update):
                     )
                 )
             else:
-                # বাকি ফাইলগুলোর জন্য আগের মতো সেটিংস অনুযায়ী চলবে
+                # বাকি ফাইলগুলোর জন্য সেটিংস অনুযায়ী
                 if not await db.get_upload_as_doc(update.from_user.id):
                     thumbnail = await Gthumb01(bot, update)
                     await update.message.reply_document(
-                        document=download_directory,
+                        document=actual_file_path,
                         thumb=thumbnail,
                         caption=description,
                         progress=progress_for_pyrogram,
@@ -228,10 +254,10 @@ async def youtube_dl_call_back(bot, update):
                         )
                     )
                 else:
-                    width, height, duration = await Mdata01(download_directory)
-                    thumb_image_path = await Gthumb02(bot, update, duration, download_directory)
+                    width, height, duration = await Mdata01(actual_file_path)
+                    thumb_image_path = await Gthumb02(bot, update, duration, actual_file_path)
                     await update.message.reply_video(
-                        video=download_directory,
+                        video=actual_file_path,
                         caption=description,
                         duration=duration,
                         width=width,
@@ -246,12 +272,12 @@ async def youtube_dl_call_back(bot, update):
                         )
                     )
             
-            # অডিও, ভিএম ইত্যাদি (যথারীতি)
+            # অডিও / ভিএম চেক
             if tg_send_type == "audio":
-                duration = await Mdata03(download_directory)
+                duration = await Mdata03(actual_file_path)
                 thumbnail = await Gthumb01(bot, update)
                 await update.message.reply_audio(
-                    audio=download_directory,
+                    audio=actual_file_path,
                     caption=description,
                     duration=duration,
                     thumb=thumbnail,
@@ -263,10 +289,10 @@ async def youtube_dl_call_back(bot, update):
                     )
                 )
             elif tg_send_type == "vm":
-                width, duration = await Mdata02(download_directory)
-                thumbnail = await Gthumb02(bot, update, duration, download_directory)
+                width, duration = await Mdata02(actual_file_path)
+                thumbnail = await Gthumb02(bot, update, duration, actual_file_path)
                 await update.message.reply_video_note(
-                    video_note=download_directory,
+                    video_note=actual_file_path,
                     duration=duration,
                     length=width,
                     thumb=thumbnail,
@@ -278,13 +304,16 @@ async def youtube_dl_call_back(bot, update):
                     )
                 )
             else:
-                logger.info("✅ " + custom_file_name)
+                logger.info("✅ " + os.path.basename(actual_file_path))
             
             end_two = datetime.now()
             time_taken_for_upload = (end_two - end_one).seconds
+            
+            # ক্লিনআপ
             try:
                 shutil.rmtree(tmp_directory_for_each_user)
-                os.remove(thumbnail)
+                if thumbnail and os.path.exists(thumbnail):
+                    os.remove(thumbnail)
             except Exception as e:
                 logger.error(f"Error cleaning up: {e}")
             
