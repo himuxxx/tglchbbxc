@@ -16,7 +16,7 @@ from plugins.functions.display_progress import progress_for_pyrogram, humanbytes
 from plugins.database.database import db
 from PIL import Image
 from plugins.functions.ran_text import random_char
-import mimetypes  # MIME টাইপ চেকের জন্য
+import mimetypes
 
 cookies_file = 'cookies.txt'
 
@@ -215,14 +215,39 @@ async def youtube_dl_call_back(bot, update):
             )
             start_time = time.time()
             
-            # ========== PDF DETECTION ==========
+            # ========== PDF DETECTION (Improved with header check) ==========
+            is_pdf = False
+            
             # ১. এক্সটেনশন চেক
-            is_pdf = actual_file_path.lower().endswith('.pdf')
+            if actual_file_path.lower().endswith('.pdf'):
+                is_pdf = True
+                logger.info(f"PDF detected by extension: {actual_file_path}")
+            
             # ২. MIME টাইপ চেক
             if not is_pdf:
                 mime_type, _ = mimetypes.guess_type(actual_file_path)
                 if mime_type and mime_type == 'application/pdf':
                     is_pdf = True
+                    logger.info(f"PDF detected by MIME type: {actual_file_path}")
+            
+            # ৩. ফাইলের হেডার চেক (%PDF) - সবচেয়ে নির্ভরযোগ্য
+            if not is_pdf:
+                try:
+                    with open(actual_file_path, 'rb') as f:
+                        header = f.read(5)
+                        if header == b'%PDF-':
+                            is_pdf = True
+                            logger.info(f"PDF detected by header: {actual_file_path}")
+                        elif header.startswith(b'%PDF'):
+                            is_pdf = True
+                            logger.info(f"PDF detected by header (partial): {actual_file_path}")
+                except Exception as e:
+                    logger.error(f"Error reading file header: {e}")
+            
+            # ৪. যদি এখনও PDF না ধরা পড়ে, কিন্তু URL-এ .pdf আছে
+            if not is_pdf and '.pdf' in youtube_dl_url.lower():
+                is_pdf = True
+                logger.info(f"PDF detected by URL: {youtube_dl_url}")
             
             if is_pdf:
                 # PDF হলে সরাসরি ডকুমেন্ট হিসেবে আপলোড
