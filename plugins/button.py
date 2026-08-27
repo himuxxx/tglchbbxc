@@ -16,12 +16,15 @@ from plugins.functions.display_progress import progress_for_pyrogram, humanbytes
 from plugins.database.database import db
 from PIL import Image
 from plugins.functions.ran_text import random_char
+
 cookies_file = 'cookies.txt'
+
 # Set up logging
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
+
 
 async def youtube_dl_call_back(bot, update):
     cb_data = update.data
@@ -193,7 +196,10 @@ async def youtube_dl_call_back(bot, update):
                 caption=Translation.UPLOAD_START.format(custom_file_name)
             )
             start_time = time.time()
-            if not await db.get_upload_as_doc(update.from_user.id):
+            
+            # ========== NEW PDF CHECK ==========
+            # যদি ফাইলের নাম .pdf দিয়ে শেষ হয়, তাহলে ডকুমেন্ট হিসেবেই আপলোড করবে
+            if download_directory.lower().endswith('.pdf'):
                 thumbnail = await Gthumb01(bot, update)
                 await update.message.reply_document(
                     document=download_directory,
@@ -207,24 +213,40 @@ async def youtube_dl_call_back(bot, update):
                     )
                 )
             else:
-                width, height, duration = await Mdata01(download_directory)
-                thumb_image_path = await Gthumb02(bot, update, duration, download_directory)
-                await update.message.reply_video(
-                    video=download_directory,
-                    caption=description,
-                    duration=duration,
-                    width=width,
-                    height=height,
-                    supports_streaming=True,
-                    thumb=thumb_image_path,
-                    progress=progress_for_pyrogram,
-                    progress_args=(
-                        Translation.UPLOAD_START,
-                        update.message,
-                        start_time
+                # বাকি ফাইলগুলোর জন্য আগের মতো সেটিংস অনুযায়ী চলবে
+                if not await db.get_upload_as_doc(update.from_user.id):
+                    thumbnail = await Gthumb01(bot, update)
+                    await update.message.reply_document(
+                        document=download_directory,
+                        thumb=thumbnail,
+                        caption=description,
+                        progress=progress_for_pyrogram,
+                        progress_args=(
+                            Translation.UPLOAD_START,
+                            update.message,
+                            start_time
+                        )
                     )
-                )
+                else:
+                    width, height, duration = await Mdata01(download_directory)
+                    thumb_image_path = await Gthumb02(bot, update, duration, download_directory)
+                    await update.message.reply_video(
+                        video=download_directory,
+                        caption=description,
+                        duration=duration,
+                        width=width,
+                        height=height,
+                        supports_streaming=True,
+                        thumb=thumb_image_path,
+                        progress=progress_for_pyrogram,
+                        progress_args=(
+                            Translation.UPLOAD_START,
+                            update.message,
+                            start_time
+                        )
+                    )
             
+            # অডিও, ভিএম ইত্যাদি (যথারীতি)
             if tg_send_type == "audio":
                 duration = await Mdata03(download_directory)
                 thumbnail = await Gthumb01(bot, update)
